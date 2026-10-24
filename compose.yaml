@@ -7,6 +7,9 @@ services:
     restart: unless-stopped
     # Run as the VPS user that owns this repository (luca, uid 1001), never as root.
     user: "1001:1001"
+    # Serve the generated feeds to FreshRSS at http://news-digest:8080/digest.xml.
+    # Only out/ is served, and only on the Docker network: no ports are published.
+    command: ["python", "-m", "http.server", "8080", "--directory", "/workspace/out"]
     env_file: .env
     volumes:
       # The repository is the only thing shared with the host.

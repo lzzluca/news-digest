@@ -1,4 +1,5 @@
 .env
-out/
+out/*
+!out/.gitkeep
 transcripts/
 __pycache__/
