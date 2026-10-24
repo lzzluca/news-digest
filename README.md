@@ -27,8 +27,8 @@ docker compose exec news-digest bash
 curl -s -G "$FRESHRSS_API_URL/accounts/ClientLogin" \
   --data-urlencode "Email=$FRESHRSS_USER" --data-urlencode "Passwd=$FRESHRSS_API_PASSWORD"
 
-# Claude CLI, no tools: prints a short answer
-claude -p --model haiku --tools '' "Reply with: ok"
+# Claude CLI, no tools: prints ok (the prompt goes first: --tools takes several values)
+claude -p "Reply with: ok" --model haiku --tools ''
 
 # Python stack
 python -c "import faster_whisper, av, feedgen; print(av.__version__)"
