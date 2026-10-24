@@ -2,7 +2,7 @@
 
 Turns the sources collected in a self-hosted FreshRSS (articles, newsletters, podcasts, YouTube) into summaries, using Claude CLI. Everything runs in one Docker container on the VPS, next to FreshRSS.
 
-Work in progress: for now this repository only contains the container.
+Work in progress: the weekly digest of text sources works; podcasts and YouTube come next.
 
 ## Setup on the server
 
@@ -32,6 +32,21 @@ claude -p "Reply with: ok" --model haiku --tools ''
 
 # Python stack
 python -c "import faster_whisper, av, feedgen; print(av.__version__)"
+```
+
+## Weekly digest
+
+`digest.py` summarizes the last 7 days of every FreshRSS category except the `*_media` ones, with Claude CLI, into `out/digest.xml`. The container serves it on the Docker network only: in FreshRSS, subscribe to `http://news-digest:8080/digest.xml` (one entry per category per week).
+
+```sh
+docker compose exec news-digest python digest.py          # all categories
+docker compose exec news-digest python digest.py "AI"     # one category, cheaper while testing
+```
+
+Run it every Sunday from the host's crontab (`crontab -e` as the user that runs Docker). Cron uses the server's time zone (`timedatectl`); this line is 04:00 UTC, i.e. 05:00 in Italy in winter and 06:00 in summer:
+
+```cron
+0 4 * * 0 cd $HOME/docker-compose-files/news-digest && docker compose exec -T news-digest python digest.py >> $HOME/news-digest.log 2>&1
 ```
 
 ## License

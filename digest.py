@@ -21,6 +21,8 @@ from feedgen.feed import FeedGenerator
 # videos, handled by the transcription pipeline). Found by convention, not by name,
 # so renaming a category does not break the digest.
 MEDIA_SUFFIX = "_media"
+# Our own feed, wherever it sits in FreshRSS: its articles are never summarized again.
+OWN_FEED_URL = "http://news-digest:8080/digest.xml"
 DAYS = 7
 EXCERPT_CHARS = 500
 MODEL = "sonnet"
@@ -75,6 +77,18 @@ def categories(auth: str) -> list[str]:
     return [n for n in names if not n.endswith(MEDIA_SUFFIX)]
 
 
+def own_feeds(auth: str) -> set[str]:
+    """Stream ids FreshRSS gives to this digest's own feed (found by URL, not by name)."""
+    res = requests.get(
+        f"{API}/reader/api/0/subscription/list",
+        params={"output": "json"},
+        headers={"Authorization": f"GoogleLogin auth={auth}"},
+        timeout=30,
+    )
+    res.raise_for_status()
+    return {s["id"] for s in res.json()["subscriptions"] if s.get("url") == OWN_FEED_URL}
+
+
 def articles(auth: str, category: str, since: int) -> list[dict]:
     """All articles of one category published after `since` (unix seconds), read or unread."""
     # A category is the stream "user/-/label/<name>"; the name may contain spaces and "&".
@@ -121,6 +135,7 @@ def summarize(category: str, items: list[dict]) -> str:
 
 def main() -> None:
     auth = login()
+    skip = own_feeds(auth)
     now = datetime.now(timezone.utc)
     since = int(time.time()) - DAYS * 24 * 3600
     # ISO week, e.g. 2026-W43: one entry per category per week, same id on every rerun.
@@ -133,7 +148,7 @@ def main() -> None:
     feed.link(href="https://github.com/lzzluca/news-digest")
 
     for category in sys.argv[1:] or categories(auth):
-        items = articles(auth, category, since)
+        items = [i for i in articles(auth, category, since) if i.get("origin", {}).get("streamId") not in skip]
         print(f"{category}: {len(items)} articles", flush=True)
         if not items:
             continue
