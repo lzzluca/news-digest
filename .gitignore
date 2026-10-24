@@ -1,0 +1,4 @@
+.env
+out/
+transcripts/
+__pycache__/

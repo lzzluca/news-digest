@@ -1,0 +1,5 @@
+faster-whisper==1.2.1
+# The latest PyAV breaks faster-whisper (metadata_errors).
+av==12.3.0
+feedgen
+requests

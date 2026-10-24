@@ -1,0 +1,33 @@
+services:
+  news-digest:
+    build:
+      context: .
+      args:
+        APP_UID: "1001"
+    restart: unless-stopped
+    # Run as the VPS user that owns this repository (luca, uid 1001), never as root.
+    user: "1001:1001"
+    env_file: .env
+    volumes:
+      # The repository is the only thing shared with the host.
+      - .:/workspace
+      # Claude CLI config and the Whisper model survive rebuilds.
+      - home:/home/app
+    # Guardrails: an episode may take hours, it must not starve FreshRSS and the blog.
+    cpus: 3
+    mem_limit: 4g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No Docker socket, no published ports. Same network as FreshRSS, reached by its service name.
+    networks:
+      - freshrss
+
+volumes:
+  home:
+
+networks:
+  freshrss:
+    external: true
+    name: freshrss_default
