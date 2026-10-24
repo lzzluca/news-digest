@@ -41,7 +41,9 @@ def articles(auth: str, category: str, since: int) -> list[dict]:
         res = requests.get(url, headers=headers, params=params, timeout=60)
         res.raise_for_status()
         data = res.json()
-        items += data.get("items", [])
+        # "ot" filters on when FreshRSS fetched the article, not when it was published:
+        # a feed added this week brings its whole archive. Keep only recent publications.
+        items += [i for i in data.get("items", []) if i.get("published", 0) >= since]
         # More than 200 articles: the API returns a cursor for the next page.
         if "continuation" not in data:
             return items
