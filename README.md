@@ -34,6 +34,23 @@ claude -p "Reply with: ok" --model haiku --tools ''
 python -c "import faster_whisper, av, feedgen; print(av.__version__)"
 ```
 
+## YouTube cookies
+
+YouTube blocks anonymous requests from datacenter IPs, so yt-dlp uses the cookies of a dedicated Google account (never your personal one: the file gives access to the account).
+
+1. In a **private window**, sign in to youtube.com with the dedicated account.
+2. Export the youtube.com cookies in Netscape format with a local extension such as "Get cookies.txt LOCALLY".
+3. Close the private window **without signing out** (signing out invalidates the cookies).
+4. Copy the file to the server: `secrets/youtube-cookies.txt` next to `compose.yaml`, then `chmod 600` it.
+
+Check, with the URL of a video from a `*_media` category:
+
+```sh
+docker compose exec news-digest sh -c 'cp "$YTDLP_COOKIES_FILE" /tmp/cookies.txt && yt-dlp --cookies /tmp/cookies.txt --skip-download --write-auto-subs --sub-langs "en.*" -o "/tmp/%(id)s" "<video URL>" && ls /tmp/*.vtt'
+```
+
+yt-dlp rewrites the cookie file it is given, so it always works on a copy: the mounted file stays read-only. When YouTube answers "Sign in to confirm you're not a bot", the cookies have expired: export them again.
+
 ## Weekly digest
 
 `digest.py` summarizes the last 7 days of every FreshRSS category except the `*_media` ones, with Claude CLI, into `out/digest.xml`. The container serves it on the Docker network only: in FreshRSS, subscribe to `http://news-digest:8080/digest.xml` (one entry per category per week).

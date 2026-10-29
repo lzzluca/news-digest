@@ -3,3 +3,5 @@ faster-whisper==1.2.1
 av==12.3.0
 feedgen
 requests
+# YouTube subtitles and audio; [default] pulls the extras YouTube needs today.
+yt-dlp[default]

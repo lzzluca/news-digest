@@ -16,6 +16,8 @@ services:
       - .:/workspace
       # Claude CLI config and the Whisper model survive rebuilds.
       - home:/home/app
+      # Secrets that are files (YouTube cookies), read-only. git-ignored, mode 600 on the host.
+      - ./secrets:/run/secrets:ro
     # Guardrails: an episode may take hours, it must not starve FreshRSS and the blog.
     cpus: 3
     mem_limit: 4g
