@@ -62,8 +62,8 @@ def login() -> str:
     raise RuntimeError("FreshRSS login: no Auth token in the response")
 
 
-def categories(auth: str) -> list[str]:
-    """Names of the categories to summarize, as FreshRSS currently calls them."""
+def labels(auth: str) -> list[str]:
+    """Names of all FreshRSS categories, as FreshRSS currently calls them."""
     res = requests.get(
         f"{API}/reader/api/0/tag/list",
         params={"output": "json"},
@@ -73,8 +73,12 @@ def categories(auth: str) -> list[str]:
     res.raise_for_status()
     # Categories are the tags "user/-/label/<name>"; the others are states (starred, read...).
     prefix = "user/-/label/"
-    names = [t["id"].removeprefix(prefix) for t in res.json()["tags"] if t["id"].startswith(prefix)]
-    return [n for n in names if not n.endswith(MEDIA_SUFFIX)]
+    return [t["id"].removeprefix(prefix) for t in res.json()["tags"] if t["id"].startswith(prefix)]
+
+
+def categories(auth: str) -> list[str]:
+    """Names of the categories to summarize: every category but the *_media ones."""
+    return [n for n in labels(auth) if not n.endswith(MEDIA_SUFFIX)]
 
 
 def own_feeds(auth: str) -> set[str]:

@@ -2,7 +2,7 @@
 
 Turns the sources collected in a self-hosted FreshRSS (articles, newsletters, podcasts, YouTube) into summaries, using Claude CLI. Everything runs in one Docker container on the VPS, next to FreshRSS.
 
-Work in progress: the weekly digest of text sources works; podcasts and YouTube come next.
+Work in progress: the weekly digest of text sources works, YouTube videos are being added; podcasts come next.
 
 ## Setup on the server
 
@@ -50,6 +50,17 @@ docker compose exec news-digest sh -c 'cp "$YTDLP_COOKIES_FILE" /tmp/cookies.txt
 ```
 
 yt-dlp rewrites the cookie file it is given, so it always works on a copy: the mounted file stays read-only. When YouTube answers "Sign in to confirm you're not a bot", the cookies have expired: export them again.
+
+## Video summaries
+
+`media.py` takes every unread YouTube video of the last 7 days in a `<topic>_media` category, downloads its subtitles, summarizes them with Claude CLI (Haiku) and writes `out/summaries-<topic>.xml`. Then it marks the video as read in FreshRSS, so read/unread is the only state. Videos without subtitles, or that fail, stay unread and are retried on the next run.
+
+```sh
+docker compose exec news-digest python media.py --limit 1   # one video, to try it
+docker compose exec news-digest python media.py             # all new videos
+```
+
+In FreshRSS, subscribe to `http://news-digest:8080/summaries-<topic>.xml` (e.g. `summaries-ai.xml`) in the matching text category: the summaries then end up in the weekly digest. Each run rewrites the feed with that run's videos only; FreshRSS keeps the entries it already imported.
 
 ## Weekly digest
 
