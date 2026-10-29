@@ -28,6 +28,8 @@ from feedgen.feed import FeedGenerator
 from digest import API, DAYS, MEDIA_SUFFIX, OUT_DIR, articles, labels, login
 
 MODEL = "haiku"
+# Pause between videos: YouTube rate-limits subtitle downloads from a server IP.
+PAUSE_SECONDS = 30
 READ = "user/-/state/com.google/read"
 
 PROMPT = """Below is the automatic transcript of a YouTube video, with its title, channel and description.
@@ -61,8 +63,10 @@ def subtitles(url: str, workdir: str) -> str | None:
     cookies = os.path.join(workdir, "cookies.txt")
     shutil.copy(os.environ["YTDLP_COOKIES_FILE"], cookies)
     subprocess.run(
+        # Only the original-language tracks: every extra (machine-translated) track is one more request.
         ["yt-dlp", "--cookies", cookies, "--skip-download", "--write-subs", "--write-auto-subs",
-         "--sub-langs", "en.*,it.*", "--sub-format", "vtt", "-o", os.path.join(workdir, "video"), url],
+         "--sub-langs", "en-orig,en,it-orig,it", "--sub-format", "vtt", "--sleep-subtitles", "5",
+         "-o", os.path.join(workdir, "video"), url],
         capture_output=True, text=True, timeout=300, check=True,
     )
     files = sorted(glob.glob(os.path.join(workdir, "video.*.vtt")))
@@ -84,6 +88,12 @@ def vtt_to_text(vtt: str) -> str:
         if not lines or lines[-1] != line:
             lines.append(line)
     return " ".join(lines)
+
+
+def error_line(stderr: str) -> str:
+    """The ERROR line of a yt-dlp failure, without the noise around it."""
+    errors = [line for line in stderr.splitlines() if line.startswith("ERROR")]
+    return errors[-1] if errors else stderr.strip()[-300:]
 
 
 def summarize(item: dict, transcript: str) -> str:
@@ -122,7 +132,8 @@ def main() -> None:
 
     auth = login()
     since = int(time.time()) - DAYS * 24 * 3600
-    done = 0
+    attempts = 0
+    rate_limited = False
     for category in [n for n in labels(auth) if n.endswith(MEDIA_SUFFIX)]:
         videos = [
             i for i in articles(auth, category, since)
@@ -139,8 +150,12 @@ def main() -> None:
         summarized: list[str] = []
 
         for item in videos:
-            if limit and done >= limit:
+            # --limit counts every video tried, failed ones included.
+            if limit and attempts >= limit:
                 break
+            if attempts:
+                time.sleep(PAUSE_SECONDS)
+            attempts += 1
             title = item.get("title", "(no title)")
             try:
                 with tempfile.TemporaryDirectory() as workdir:
@@ -150,8 +165,15 @@ def main() -> None:
                     continue
                 html = summarize(item, transcript)
             except subprocess.CalledProcessError as err:
-                # One failing video must not stop the others; it stays unread and is retried.
-                print(f"  failed: {title}: {err.stderr.strip()[-300:]}", flush=True)
+                message = error_line(err.stderr or "")
+                if "HTTP Error 429" in message:
+                    # Going on would only extend the block: stop after saving what is done.
+                    # Videos left unread are retried on the next run.
+                    print(f"  rate-limited by YouTube, stopping: {message}", flush=True)
+                    rate_limited = True
+                    break
+                # Any other failure must not stop the others; the video stays unread and is retried.
+                print(f"  failed: {title}: {message}", flush=True)
                 continue
             entry = feed.add_entry()
             entry.id(item["id"])
@@ -161,10 +183,11 @@ def main() -> None:
             entry.updated(datetime.fromtimestamp(item.get("published", 0), timezone.utc))
             entry.content(html, type="html")
             summarized.append(item["id"])
-            done += 1
             print(f"  ok: {title}", flush=True)
 
         if not summarized:
+            if rate_limited:
+                return
             continue
         # Write the feed first, then mark as read: a crash in between means a video is
         # summarized twice, never lost.
@@ -172,6 +195,8 @@ def main() -> None:
         feed.atom_file(os.path.join(OUT_DIR, f"summaries-{topic}.xml"), pretty=True)
         for item_id in summarized:
             mark_read(auth, item_id)
+        if rate_limited:
+            return
 
 
 if __name__ == "__main__":
