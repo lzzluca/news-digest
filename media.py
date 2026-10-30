@@ -5,8 +5,9 @@ download its subtitles, summarize them with Claude CLI, add the summary to the f
 out/summaries-<topic>.xml, then mark the video as read in FreshRSS. FreshRSS imports that
 feed into the text category, so the Sunday digest covers the videos too.
 
-Videos without subtitles are skipped and stay unread (Whisper comes later). A failed
-video stays unread too, so the next run retries it: read/unread is the only state.
+Subtitles are tried first. When a video has none, or YouTube refuses subtitles to this
+server (429), the audio is downloaded and transcribed locally with Whisper: slower, but it
+works. A failed video stays unread, so the next run retries it: read/unread is the only state.
 
 Run inside the container:
     python media.py             # every new video
@@ -28,6 +29,9 @@ from feedgen.feed import FeedGenerator
 from digest import API, DAYS, MEDIA_SUFFIX, OUT_DIR, articles, labels, login
 
 MODEL = "haiku"
+# Whisper "small" with int8 weights: good enough for speech, fits the container's 4 GB.
+WHISPER_MODEL = "small"
+WHISPER_THREADS = 3
 # Pause between videos: YouTube rate-limits subtitle downloads from a server IP.
 PAUSE_SECONDS = 30
 READ = "user/-/state/com.google/read"
@@ -75,6 +79,32 @@ def subtitles(url: str, workdir: str) -> str | None:
     # Prefer the original-language track ("en-orig") over a machine translation.
     files.sort(key=lambda f: "-orig" not in f)
     return vtt_to_text(open(files[0], encoding="utf-8").read())
+
+
+def audio_transcript(url: str, workdir: str) -> str:
+    """Download the audio track and transcribe it with Whisper (minutes per video, CPU only)."""
+    cookies = os.path.join(workdir, "cookies.txt")
+    shutil.copy(os.environ["YTDLP_COOKIES_FILE"], cookies)
+    subprocess.run(
+        ["yt-dlp", "--cookies", cookies, "-f", "bestaudio", "-o", os.path.join(workdir, "audio.%(ext)s"), url],
+        capture_output=True, text=True, timeout=1800, check=True,
+    )
+    audio = glob.glob(os.path.join(workdir, "audio.*"))[0]
+    segments, _ = whisper().transcribe(audio)
+    return " ".join(segment.text.strip() for segment in segments)
+
+
+_whisper = None
+
+
+def whisper():
+    """Load the Whisper model once per run; the first run downloads it into the home volume."""
+    global _whisper
+    if _whisper is None:
+        from faster_whisper import WhisperModel
+
+        _whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=WHISPER_THREADS)
+    return _whisper
 
 
 def vtt_to_text(vtt: str) -> str:
@@ -134,6 +164,8 @@ def main() -> None:
     since = int(time.time()) - DAYS * 24 * 3600
     attempts = 0
     rate_limited = False
+    # After the first 429 on subtitles, go straight to audio for the rest of the run.
+    subtitles_blocked = False
     for category in [n for n in labels(auth) if n.endswith(MEDIA_SUFFIX)]:
         videos = [
             i for i in articles(auth, category, since)
@@ -159,10 +191,18 @@ def main() -> None:
             title = item.get("title", "(no title)")
             try:
                 with tempfile.TemporaryDirectory() as workdir:
-                    transcript = subtitles(link(item), workdir)
-                if transcript is None:
-                    print(f"  skip, no subtitles: {title}", flush=True)
-                    continue
+                    transcript = None
+                    if not subtitles_blocked:
+                        try:
+                            transcript = subtitles(link(item), workdir)
+                        except subprocess.CalledProcessError as err:
+                            if "HTTP Error 429" not in error_line(err.stderr or ""):
+                                raise
+                            print("  subtitles refused (429): using audio + Whisper from now on", flush=True)
+                            subtitles_blocked = True
+                    if transcript is None:
+                        print(f"  transcribing audio: {title}", flush=True)
+                        transcript = audio_transcript(link(item), workdir)
                 html = summarize(item, transcript)
             except subprocess.CalledProcessError as err:
                 message = error_line(err.stderr or "")

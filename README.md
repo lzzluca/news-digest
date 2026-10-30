@@ -53,7 +53,7 @@ yt-dlp rewrites the cookie file it is given, so it always works on a copy: the m
 
 ## Video summaries
 
-`media.py` takes every unread YouTube video of the last 7 days in a `<topic>_media` category, downloads its subtitles, summarizes them with Claude CLI (Haiku) and writes `out/summaries-<topic>.xml`. Then it marks the video as read in FreshRSS, so read/unread is the only state. Videos without subtitles, or that fail, stay unread and are retried on the next run.
+`media.py` takes every unread YouTube video of the last 7 days in a `<topic>_media` category, gets a transcript, summarizes it with Claude CLI (Haiku) and writes `out/summaries-<topic>.xml`. Then it marks the video as read in FreshRSS, so read/unread is the only state. The transcript comes from YouTube's subtitles when possible; when a video has none, or YouTube refuses subtitles to the server (HTTP 429), the audio is downloaded and transcribed in the container with Whisper (`small`, CPU: several minutes per video; the first run also downloads the model). Videos that fail stay unread and are retried on the next run.
 
 ```sh
 docker compose exec news-digest python media.py --limit 1   # one video, to try it
