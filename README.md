@@ -76,6 +76,12 @@ docker compose exec news-digest python media.py --limit 1   # one video, to try 
 docker compose exec news-digest python media.py             # all new videos
 ```
 
+Run it every night from the host's crontab. `flock -n` skips a night if the previous run (hours, with a backlog) is still going:
+
+```cron
+0 1 * * * cd $HOME/docker-compose-files/news-digest && flock -n /tmp/news-digest-media.lock docker compose exec -T news-digest python media.py >> $HOME/news-digest-media.log 2>&1
+```
+
 In FreshRSS, subscribe to `http://news-digest:8080/summaries-<topic>.xml` (e.g. `summaries-ai.xml`) in the matching text category: the summaries then end up in the weekly digest. Each run rewrites the feed with that run's videos only; FreshRSS keeps the entries it already imported.
 
 ## Weekly digest
