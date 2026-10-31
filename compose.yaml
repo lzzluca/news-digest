@@ -7,17 +7,27 @@ services:
     restart: unless-stopped
     # Run as the VPS user that owns this repository (luca, uid 1001), never as root.
     user: "1001:1001"
-    # Serve the generated feeds to FreshRSS at http://news-digest:8080/digest.xml.
-    # Only out/ is served, and only on the Docker network: no ports are published.
-    command: ["python", "-m", "http.server", "8080", "--directory", "/workspace/out"]
     env_file: .env
     volumes:
-      # The repository is the only thing shared with the host.
-      - .:/workspace
-      # Claude CLI config and the Whisper model survive rebuilds.
-      - home:/home/app
+      # The code, read-only: the container must not be able to change what the host runs
+      # (compose.yaml above all, which the auto-deploy applies).
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+      # The only place it writes: the generated feeds, served on http://news-digest:8080/.
+      - type: bind
+        source: ./out
+        target: /workspace/out
+      # Named volume: Claude CLI config and the Whisper model survive rebuilds.
+      - type: volume
+        source: home
+        target: /home/app
       # Secrets that are files (YouTube cookies), read-only. git-ignored, mode 600 on the host.
-      - ./secrets:/run/secrets:ro
+      - type: bind
+        source: ./secrets
+        target: /run/secrets
+        read_only: true
     # Guardrails: an episode may take hours, it must not starve FreshRSS and the blog.
     cpus: 3
     mem_limit: 4g
@@ -26,6 +36,7 @@ services:
     cap_drop:
       - ALL
     # No Docker socket, no published ports. Same network as FreshRSS, reached by its service name.
+    # The main process (the feed server) is the image's CMD, see the Dockerfile.
     networks:
       - freshrss
 
