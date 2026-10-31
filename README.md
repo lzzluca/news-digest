@@ -2,7 +2,7 @@
 
 Turns the sources collected in a self-hosted FreshRSS (articles, newsletters, podcasts, YouTube) into summaries, using Claude CLI. Everything runs in one Docker container on the VPS, next to FreshRSS.
 
-Work in progress: the weekly digest of text sources works, YouTube videos are being added; podcasts come next.
+Work in progress: the weekly digest of text sources and the YouTube and podcast summaries are built; podcasts are the newest part.
 
 ## Setup on the server
 
@@ -67,9 +67,11 @@ docker compose exec news-digest sh -c 'cp "$YTDLP_COOKIES_FILE" /tmp/cookies.txt
 
 yt-dlp rewrites the cookie file it is given, so it always works on a copy: the mounted file stays read-only. When YouTube answers "Sign in to confirm you're not a bot", the cookies have expired: export them again.
 
-## Video summaries
+## Video and podcast summaries
 
 `media.py` takes every unread YouTube video of the last 7 days in a `<topic>_media` category, gets a transcript, summarizes it with Claude CLI (Haiku) and writes `out/summaries-<topic>.xml`. Then it marks the video as read in FreshRSS, so read/unread is the only state. The transcript comes from YouTube's subtitles when possible; when a video has none, or YouTube refuses subtitles to the server (HTTP 429), the audio is downloaded and transcribed in the container with Whisper (`small`, CPU: several minutes per video; the first run also downloads the model). Videos that fail stay unread and are retried on the next run.
+
+Podcasts work the same way: subscribe to the show's public RSS feed in a `<topic>_media` category, and every unread episode with an audio file (the feed's enclosure) is downloaded directly, transcribed with Whisper and summarized into the same `summaries-<topic>.xml`. The audio URL comes from a third-party feed, so only https is followed (redirects included), which keeps it away from the plain-http services on the Docker network; files over 500 MB are skipped. Whisper runs at roughly real time or slower on this CPU, so a one-hour episode takes about an hour.
 
 ```sh
 docker compose exec news-digest python media.py --limit 1   # one video, to try it
