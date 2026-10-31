@@ -21,7 +21,8 @@ RUN npm install -g deno
 # Home for the runtime user (uid set in compose.yaml): Claude CLI config and the Whisper model cache.
 # Created here so the named volume mounted on it inherits this ownership.
 ARG APP_UID=1001
-RUN mkdir -p /home/app/.cache && chown -R ${APP_UID}:${APP_UID} /home/app
+ARG APP_GID=1001
+RUN mkdir -p /home/app/.cache && chown -R ${APP_UID}:${APP_GID} /home/app
 ENV HOME=/home/app
 # The repository is mounted read-only: Python must not try to write __pycache__ into it.
 ENV PYTHONDONTWRITEBYTECODE=1

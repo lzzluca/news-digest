@@ -3,10 +3,12 @@ services:
     build:
       context: .
       args:
-        APP_UID: "1001"
+        APP_UID: ${APP_UID:-1001}
+        APP_GID: ${APP_GID:-1001}
     restart: unless-stopped
-    # Run as the VPS user that owns this repository (luca, uid 1001), never as root.
-    user: "1001:1001"
+    # Never root. APP_UID/APP_GID come from .env: a dedicated host user with no sudo and
+    # no Docker access, so escaping the container gains nothing. Defaults to 1001 (luca).
+    user: "${APP_UID:-1001}:${APP_GID:-1001}"
     env_file: .env
     volumes:
       # The code, read-only: the container must not be able to change what the host runs

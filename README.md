@@ -16,7 +16,23 @@ cp .env.example .env && chmod 600 .env   # fill in the values
 docker compose up -d --build
 ```
 
-`compose.yaml` has two values specific to my server: uid `1001` (owner of this folder: `id -u`) and the `freshrss_default` network (`docker network ls`).
+`compose.yaml` has one value specific to my server: the `freshrss_default` network (`docker network ls`).
+
+### Dedicated user
+
+The container runs as a host user that exists only for it: no login, no sudo, not in the `docker` group. If something escaped the container, that is all it would get. Its uid and gid go in `.env` (`APP_UID`, `APP_GID`; without them the container runs as uid 1001).
+
+```sh
+sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin news-digest
+id news-digest                                   # put uid and gid in .env as APP_UID / APP_GID
+sudo chgrp news-digest secrets secrets/*.txt     # it reads the secrets through its group...
+chmod 750 secrets && chmod 640 secrets/*.txt     # ...while you keep owning them
+sudo chown -R news-digest:news-digest out        # the only place it writes
+docker compose down
+docker volume rm news-digest_home                # recreated owned by the new user (the Whisper model downloads again)
+docker compose up -d --build
+docker compose exec news-digest id               # expect uid=<APP_UID>
+```
 
 ## Check that it works
 
