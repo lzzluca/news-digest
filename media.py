@@ -240,4 +240,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Start and end times in the log, to see how long a nightly run takes.
+    print(f"start {datetime.now(timezone.utc).isoformat(timespec='minutes')}", flush=True)
+    try:
+        main()
+    finally:
+        print(f"end {datetime.now(timezone.utc).isoformat(timespec='minutes')}", flush=True)
