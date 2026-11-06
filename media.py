@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -41,6 +42,8 @@ READ = "user/-/state/com.google/read"
 # A podcast file larger than this is skipped: about 8 hours of audio at 128 kbps.
 MAX_AUDIO_BYTES = 500 * 1024 * 1024
 MAX_REDIRECTS = 10
+# Audio is transcribed in chunks of this length, so a long episode doesn't need more memory.
+CHUNK_SECONDS = 600
 
 PROMPT = """Below is the automatic transcript of a YouTube video or podcast episode, with its title, channel or show, and description.
 The transcript comes from speech recognition: fix names and terms from the title and description when they look wrong.
@@ -134,8 +137,29 @@ def audio_transcript(url: str, workdir: str) -> str:
 
 
 def transcribe(audio: str) -> str:
-    segments, _ = whisper().transcribe(audio)
-    return " ".join(segment.text.strip() for segment in segments)
+    """Transcribe in a child process: if Whisper runs out of memory, the kernel kills only the
+    child, and the run goes on with the next item."""
+    result = subprocess.run(
+        [sys.executable, os.path.abspath(__file__), "--transcribe", audio],
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout.strip()
+
+
+def transcribe_chunks(audio: str) -> str:
+    """Split the audio into 10-minute 16 kHz mono chunks and transcribe them one at a time:
+    memory stays flat whatever the length of the episode."""
+    with tempfile.TemporaryDirectory() as chunks:
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", audio, "-ac", "1", "-ar", "16000",
+             "-f", "segment", "-segment_time", str(CHUNK_SECONDS), os.path.join(chunks, "%04d.wav")],
+            capture_output=True, text=True, check=True,
+        )
+        texts = []
+        for chunk in sorted(glob.glob(os.path.join(chunks, "*.wav"))):
+            segments, _ = whisper().transcribe(chunk)
+            texts.append(" ".join(segment.text.strip() for segment in segments))
+        return " ".join(texts)
 
 
 _whisper = None
@@ -223,7 +247,6 @@ def main() -> None:
         feed.title(f"Video summaries: {category.removesuffix(MEDIA_SUFFIX)}")
         feed.author({"name": "news-digest"})
         feed.link(href="https://github.com/lzzluca/news-digest")
-        summarized: list[str] = []
 
         for item in videos:
             # --limit counts every video tried, failed ones included.
@@ -260,7 +283,8 @@ def main() -> None:
                     rate_limited = True
                     break
                 # Any other failure must not stop the others; the video stays unread and is retried.
-                print(f"  failed: {title}: {message}", flush=True)
+                # A killed transcription (out of memory) has no stderr: show its exit code instead.
+                print(f"  failed: {title}: {message or f'exit code {err.returncode}'}", flush=True)
                 continue
             except (requests.RequestException, ValueError) as err:
                 # A podcast download that failed or was refused; the episode stays unread and is retried.
@@ -273,24 +297,23 @@ def main() -> None:
             entry.author({"name": item.get("origin", {}).get("title", "?")})
             entry.updated(datetime.fromtimestamp(item.get("published", 0), timezone.utc))
             entry.content(html, type="html")
-            summarized.append(item["id"])
+            # Save after every item, so a crash later in the run loses nothing already done.
+            # Write the feed first, then mark as read: a crash in between means a video is
+            # summarized twice, never lost.
+            os.makedirs(OUT_DIR, exist_ok=True)
+            feed.atom_file(os.path.join(OUT_DIR, f"summaries-{topic}.xml"), pretty=True)
+            mark_read(auth, item["id"])
             print(f"  ok: {title}", flush=True)
 
-        if not summarized:
-            if rate_limited:
-                return
-            continue
-        # Write the feed first, then mark as read: a crash in between means a video is
-        # summarized twice, never lost.
-        os.makedirs(OUT_DIR, exist_ok=True)
-        feed.atom_file(os.path.join(OUT_DIR, f"summaries-{topic}.xml"), pretty=True)
-        for item_id in summarized:
-            mark_read(auth, item_id)
         if rate_limited:
             return
 
 
 if __name__ == "__main__":
+    # Child process started by transcribe(): print the transcript and exit.
+    if sys.argv[1:2] == ["--transcribe"]:
+        print(transcribe_chunks(sys.argv[2]))
+        sys.exit(0)
     # Start and end times in the log, to see how long a nightly run takes.
     print(f"start {datetime.now(timezone.utc).isoformat(timespec='minutes')}", flush=True)
     try:
