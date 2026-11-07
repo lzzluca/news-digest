@@ -9,7 +9,8 @@ YouTube: subtitles are tried first. When a video has none, or YouTube refuses su
 this server (429), the audio is downloaded and transcribed locally with Whisper: slower, but
 it works. Podcasts: the episode's audio file (the feed's enclosure) is downloaded directly and
 goes through the same Whisper path. A failed item stays unread, so the next run retries it:
-read/unread is the only state.
+read/unread is the only state. Unread items older than 7 days are marked read without a summary,
+so they don't stay unread forever.
 
 Run inside the container:
     python media.py             # every new video and episode
@@ -25,7 +26,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import requests
 from feedgen.feed import FeedGenerator
@@ -223,6 +224,22 @@ def mark_read(auth: str, item_id: str) -> None:
     res.raise_for_status()
 
 
+def stale(auth: str, category: str, since: int) -> list[dict]:
+    """Unread items of one category published before `since`: too old to process, never read otherwise."""
+    url = f"{API}/reader/api/0/stream/contents/" + quote(f"user/-/label/{category}", safe="")
+    headers = {"Authorization": f"GoogleLogin auth={auth}"}
+    params = {"xt": READ, "n": 200, "output": "json"}
+    items: list[dict] = []
+    while True:
+        res = requests.get(url, headers=headers, params=params, timeout=60)
+        res.raise_for_status()
+        data = res.json()
+        items += [i for i in data.get("items", []) if i.get("published", 0) < since]
+        if "continuation" not in data:
+            return items
+        params["c"] = data["continuation"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=0, help="process at most N items (0 = all)")
@@ -240,6 +257,16 @@ def main() -> None:
             if READ not in i.get("categories", []) and (is_youtube(link(i)) or podcast_audio(i))
         ]
         print(f"{category}: {len(videos)} new videos and episodes", flush=True)
+        # Older than DAYS they would stay unread forever: mark them read without summarizing.
+        try:
+            old = stale(auth, category, since)
+            for item in old:
+                mark_read(auth, item["id"])
+            if old:
+                print(f"  marked {len(old)} items older than {DAYS} days as read", flush=True)
+        except requests.RequestException as err:
+            # Not worth stopping the run for; printed as "failed:" so the alert fires.
+            print(f"  failed: marking old items as read: {err}", flush=True)
         # One feed per topic: "AI_media" -> out/summaries-ai.xml
         topic = category.removesuffix(MEDIA_SUFFIX).lower().replace(" ", "-")
         feed = FeedGenerator()
