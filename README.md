@@ -95,10 +95,10 @@ docker compose exec news-digest python digest.py          # all categories
 docker compose exec news-digest python digest.py "AI"     # one category, cheaper while testing
 ```
 
-Run it every Sunday from the host's crontab (`crontab -e` as the user that runs Docker). Cron uses the server's time zone (`timedatectl`); this line is 04:00 UTC, i.e. 05:00 in Italy in winter and 06:00 in summer:
+Run it every Sunday from the host's crontab (`crontab -e` as the user that runs Docker). Cron uses the server's time zone (`timedatectl`); on this server it is Europe/Berlin, so this line runs at 05:00 Italian time all year:
 
 ```cron
-0 4 * * 0 cd $HOME/docker-compose-files/news-digest && docker compose exec -T news-digest python digest.py >> $HOME/news-digest.log 2>&1
+0 5 * * 0 cd $HOME/docker-compose-files/news-digest && docker compose exec -T news-digest python digest.py >> $HOME/news-digest.log 2>&1
 ```
 
 ## License
