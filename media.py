@@ -244,7 +244,7 @@ def main() -> None:
         topic = category.removesuffix(MEDIA_SUFFIX).lower().replace(" ", "-")
         feed = FeedGenerator()
         feed.id(f"urn:news-digest:summaries:{topic}")
-        feed.title(f"Video summaries: {category.removesuffix(MEDIA_SUFFIX)}")
+        feed.title(f"Video and podcast summaries: {category.removesuffix(MEDIA_SUFFIX)}")
         feed.author({"name": "news-digest"})
         feed.link(href="https://github.com/lzzluca/news-digest")
 
