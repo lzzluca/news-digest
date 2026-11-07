@@ -282,6 +282,11 @@ def main() -> None:
                     print(f"  rate-limited by YouTube, stopping: {message}", flush=True)
                     rate_limited = True
                     break
+                # A scheduled premiere or live stream isn't a failure: it stays unread and is
+                # retried until it's out. Not printed as "failed:", which would trigger the alert.
+                if "live event will begin" in message or "Premieres in" in message:
+                    print(f"  not yet available, retried next run: {title}", flush=True)
+                    continue
                 # Any other failure must not stop the others; the video stays unread and is retried.
                 # A killed transcription (out of memory) has no stderr: show its exit code instead.
                 print(f"  failed: {title}: {message or f'exit code {err.returncode}'}", flush=True)
