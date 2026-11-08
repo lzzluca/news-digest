@@ -59,6 +59,16 @@ PRIORITIES = {
 6. ML fundamentals and research at the edge.
 Pick the Highlights mostly from the first four.
 """,
+    "Web": """Luca follows this category to stay employable as a senior frontend engineer.
+His priorities, most important first:
+1. React and TypeScript: releases, new APIs, changes in recommended patterns.
+2. The web platform: new CSS, HTML and browser APIs, Baseline, Interop.
+3. Tooling and frameworks (Next.js, Vite, bundlers, TanStack, Bun, Deno): keep them all, under their own theme.
+4. Web security: low priority; a Highlight only when it is major, such as a vulnerability in React or a widely used library.
+5. Performance and accessibility.
+Leave out React Native and mobile, unless it is a major change for the whole ecosystem.
+Pick the Highlights mostly from the first two.
+""",
 }
 
 
