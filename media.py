@@ -1,14 +1,14 @@
 """Media pipeline: turn each new YouTube video or podcast episode of a *_media category into a short summary.
 
 For every unread YouTube video or podcast episode published in the last 7 days in a
-"<topic>_media" category: get a transcript, summarize it with Claude CLI, add the summary to
+"<topic>_media" category: summarize it, add the summary to
 the feed out/summaries-<topic>.xml, then mark the item as read in FreshRSS. FreshRSS imports
 that feed into the text category, so the Sunday digest covers videos and podcasts too.
 
-YouTube: subtitles are tried first. When a video has none, or YouTube refuses subtitles to
-this server (429), the audio is downloaded and transcribed locally with Whisper: slower, but
-it works. Podcasts: the episode's audio file (the feed's enclosure) is downloaded directly and
-goes through the same Whisper path. A failed item stays unread, so the next run retries it:
+YouTube: Gemini summarizes the video from its URL (it reads the video from Google's servers;
+this server gets HTTP 429 from YouTube). Podcasts: the episode's audio file (the feed's
+enclosure) is downloaded and transcribed locally with Whisper, then summarized with Claude CLI.
+A failed item stays unread, so the next run retries it:
 read/unread is the only state. Unread items older than 7 days are marked read without a summary,
 so they don't stay unread forever.
 
@@ -20,7 +20,6 @@ import argparse
 import glob
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,7 +36,7 @@ MODEL = "haiku"
 # Whisper "small" with int8 weights: good enough for speech, fits the container's 4 GB.
 WHISPER_MODEL = "small"
 WHISPER_THREADS = 3
-# Pause between videos: YouTube rate-limits subtitle downloads from a server IP.
+# Pause between items: keeps well under the Gemini free-tier rate limits.
 PAUSE_SECONDS = 30
 READ = "user/-/state/com.google/read"
 # A podcast file larger than this is skipped: about 8 hours of audio at 128 kbps.
@@ -49,8 +48,8 @@ PODCAST_USER_AGENT = "news-digest/1.0 (podcast downloader)"
 # Audio is transcribed in chunks of this length, so a long episode doesn't need more memory.
 CHUNK_SECONDS = 600
 
-# YouTube videos are summarized by Gemini when GEMINI_API_KEY is set: Google reads the video from
-# its own servers, so no subtitles, cookies or Whisper on this server. Low media resolution keeps
+# YouTube videos are summarized by Gemini: Google reads the video from its own servers, so no
+# subtitles, cookies or Whisper on this server (YouTube answers it with HTTP 429). Low media resolution keeps
 # an hour of video well under the model's 1M-token context.
 GEMINI_MODEL = "gemini-3.1-flash-lite"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
@@ -127,37 +126,6 @@ def download_podcast(url: str, workdir: str) -> str:
     raise ValueError(f"more than {MAX_REDIRECTS} redirects, skipped")
 
 
-def subtitles(url: str, workdir: str) -> str | None:
-    """The video's subtitles as plain text, or None when it has none."""
-    # yt-dlp rewrites the cookie file it is given: work on a copy, the mounted one is read-only.
-    cookies = os.path.join(workdir, "cookies.txt")
-    shutil.copy(os.environ["YTDLP_COOKIES_FILE"], cookies)
-    subprocess.run(
-        # Only the original-language tracks: every extra (machine-translated) track is one more request.
-        ["yt-dlp", "--cookies", cookies, "--skip-download", "--write-subs", "--write-auto-subs",
-         "--sub-langs", "en-orig,en,it-orig,it", "--sub-format", "vtt", "--sleep-subtitles", "5",
-         "-o", os.path.join(workdir, "video"), url],
-        capture_output=True, text=True, timeout=300, check=True,
-    )
-    files = sorted(glob.glob(os.path.join(workdir, "video.*.vtt")))
-    if not files:
-        return None
-    # Prefer the original-language track ("en-orig") over a machine translation.
-    files.sort(key=lambda f: "-orig" not in f)
-    return vtt_to_text(open(files[0], encoding="utf-8").read())
-
-
-def audio_transcript(url: str, workdir: str) -> str:
-    """Download the audio track and transcribe it with Whisper (minutes per video, CPU only)."""
-    cookies = os.path.join(workdir, "cookies.txt")
-    shutil.copy(os.environ["YTDLP_COOKIES_FILE"], cookies)
-    subprocess.run(
-        ["yt-dlp", "--cookies", cookies, "-f", "bestaudio", "-o", os.path.join(workdir, "audio.%(ext)s"), url],
-        capture_output=True, text=True, timeout=1800, check=True,
-    )
-    return transcribe(glob.glob(os.path.join(workdir, "audio.*"))[0])
-
-
 def transcribe(audio: str) -> str:
     """Transcribe in a child process: if Whisper runs out of memory, the kernel kills only the
     child, and the run goes on with the next item."""
@@ -197,27 +165,17 @@ def whisper():
     return _whisper
 
 
-def vtt_to_text(vtt: str) -> str:
-    """Strip timings and tags from a WebVTT file. Auto-captions repeat each line while it
-    scrolls, so consecutive duplicates are dropped."""
-    lines: list[str] = []
-    for line in vtt.splitlines():
-        line = re.sub(r"<[^>]+>", "", line).strip()
-        if not line or "-->" in line or line.startswith(("WEBVTT", "Kind:", "Language:")):
-            continue
-        if not lines or lines[-1] != line:
-            lines.append(line)
-    return " ".join(lines)
-
-
 def error_line(stderr: str) -> str:
-    """The ERROR line of a yt-dlp failure, without the noise around it."""
+    """The ERROR line of a failed command, without the noise around it."""
     errors = [line for line in stderr.splitlines() if line.startswith("ERROR")]
     return errors[-1] if errors else stderr.strip()[-300:]
 
 
 def gemini_summary(item: dict) -> str:
     """Summarize a YouTube video with Gemini, which fetches the video itself."""
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        raise ValueError("GEMINI_API_KEY is not set")
     prompt = GEMINI_PROMPT.format(
         title=item.get("title", ""),
         channel=item.get("origin", {}).get("title", ""),
@@ -229,10 +187,13 @@ def gemini_summary(item: dict) -> str:
     }
     # The key goes in a header, not in the URL, so it never ends up in a log line.
     res = requests.post(GEMINI_URL, json=body, timeout=600,
-                        headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
+                        headers={"x-goog-api-key": key})
     if not res.ok:
         raise ValueError(f"Gemini HTTP {res.status_code}: {res.text[:300]}")
-    parts = res.json()["candidates"][0]["content"]["parts"]
+    try:
+        parts = res.json()["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError) as err:
+        raise ValueError(f"Gemini answered without text: {res.text[:300]}") from err
     text = "".join(p.get("text", "") for p in parts).strip()
     # The model sometimes wraps the fragment in a ```html fence.
     text = re.sub(r"^```(?:html)?\s*|\s*```$", "", text)
@@ -294,9 +255,6 @@ def main() -> None:
     auth = login()
     since = int(time.time()) - DAYS * 24 * 3600
     attempts = 0
-    rate_limited = False
-    # After the first 429 on subtitles, go straight to audio for the rest of the run.
-    subtitles_blocked = False
     for category in [n for n in labels(auth) if n.endswith(MEDIA_SUFFIX)]:
         videos = [
             i for i in articles(auth, category, since)
@@ -330,51 +288,23 @@ def main() -> None:
             attempts += 1
             title = item.get("title", "(no title)")
             try:
-                html = None
-                if is_youtube(link(item)) and os.environ.get("GEMINI_API_KEY"):
-                    try:
-                        print(f"  summarizing with Gemini: {title}", flush=True)
-                        html = gemini_summary(item)
-                    except (requests.RequestException, ValueError, KeyError, IndexError) as err:
-                        # Quota used up, private video, model error: fall back to the transcript path.
-                        print(f"  Gemini failed, falling back to the transcript: {err}", flush=True)
-                if html is None:
+                if is_youtube(link(item)):
+                    print(f"  summarizing with Gemini: {title}", flush=True)
+                    html = gemini_summary(item)
+                else:
+                    print(f"  transcribing podcast: {title}", flush=True)
                     with tempfile.TemporaryDirectory() as workdir:
-                        transcript = None
-                        if not is_youtube(link(item)):
-                            print(f"  transcribing podcast: {title}", flush=True)
-                            transcript = transcribe(download_podcast(podcast_audio(item), workdir))
-                        elif not subtitles_blocked:
-                            try:
-                                transcript = subtitles(link(item), workdir)
-                            except subprocess.CalledProcessError as err:
-                                if "HTTP Error 429" not in error_line(err.stderr or ""):
-                                    raise
-                                print("  subtitles refused (429): using audio + Whisper from now on", flush=True)
-                                subtitles_blocked = True
-                        if transcript is None:
-                            print(f"  transcribing audio: {title}", flush=True)
-                            transcript = audio_transcript(link(item), workdir)
+                        transcript = transcribe(download_podcast(podcast_audio(item), workdir))
                     html = summarize(item, transcript)
             except subprocess.CalledProcessError as err:
-                message = error_line(err.stderr or "")
-                if "HTTP Error 429" in message:
-                    # Going on would only extend the block: stop after saving what is done.
-                    # Videos left unread are retried on the next run.
-                    print(f"  rate-limited by YouTube, stopping: {message}", flush=True)
-                    rate_limited = True
-                    break
-                # A scheduled premiere or live stream isn't a failure: it stays unread and is
-                # retried until it's out. Not printed as "failed:", which would trigger the alert.
-                if "live event will begin" in message or "Premieres in" in message:
-                    print(f"  not yet available, retried next run: {title}", flush=True)
-                    continue
-                # Any other failure must not stop the others; the video stays unread and is retried.
+                # Any failure must not stop the others; the item stays unread and is retried.
                 # A killed transcription (out of memory) has no stderr: show its exit code instead.
+                message = error_line(err.stderr or "")
                 print(f"  failed: {title}: {message or f'exit code {err.returncode}'}", flush=True)
                 continue
             except (requests.RequestException, ValueError) as err:
-                # A podcast download that failed or was refused; the episode stays unread and is retried.
+                # Gemini refused or failed (quota, private video, premiere), or a podcast download
+                # failed; the item stays unread and is retried on the next run.
                 print(f"  failed: {title}: {err}", flush=True)
                 continue
             entry = feed.add_entry()
@@ -391,9 +321,6 @@ def main() -> None:
             feed.atom_file(os.path.join(OUT_DIR, f"summaries-{topic}.xml"), pretty=True)
             mark_read(auth, item["id"])
             print(f"  ok: {title}", flush=True)
-
-        if rate_limited:
-            return
 
 
 if __name__ == "__main__":
