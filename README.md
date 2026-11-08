@@ -52,6 +52,8 @@ python -c "import faster_whisper, av, feedgen; print(av.__version__)"
 
 ## YouTube cookies
 
+With `GEMINI_API_KEY` set in `.env`, YouTube videos are summarized by Gemini, which reads the video from Google's servers: no subtitles, cookies or Whisper here. Use a key from an AI Studio project without billing: a project with billing is not on the free tier and gets refused when its credits run out. After adding the key, `docker compose up -d --force-recreate`. The cookies below are the fallback when Gemini fails.
+
 YouTube blocks anonymous requests from datacenter IPs, so yt-dlp uses the cookies of a dedicated Google account (never your personal one: the file gives access to the account).
 
 1. In a **private window**, sign in to youtube.com with the dedicated account.
