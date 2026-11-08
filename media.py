@@ -43,6 +43,9 @@ READ = "user/-/state/com.google/read"
 # A podcast file larger than this is skipped: about 8 hours of audio at 128 kbps.
 MAX_AUDIO_BYTES = 500 * 1024 * 1024
 MAX_REDIRECTS = 10
+
+# Some podcast hosts (beehiiv) answer 403 to the default python-requests User-Agent.
+PODCAST_USER_AGENT = "news-digest/1.0 (podcast downloader)"
 # Audio is transcribed in chunks of this length, so a long episode doesn't need more memory.
 CHUNK_SECONDS = 600
 
@@ -88,7 +91,8 @@ def download_podcast(url: str, workdir: str) -> str:
     for _ in range(MAX_REDIRECTS + 1):
         if not url.startswith("https://"):
             raise ValueError(f"not an https URL, skipped: {url}")
-        res = requests.get(url, stream=True, allow_redirects=False, timeout=60)
+        res = requests.get(url, stream=True, allow_redirects=False, timeout=60,
+                           headers={"User-Agent": PODCAST_USER_AGENT})
         if res.is_redirect:
             res.close()
             url = urljoin(url, res.headers["Location"])
