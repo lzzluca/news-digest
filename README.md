@@ -75,6 +75,8 @@ In FreshRSS, subscribe to `http://news-digest:8080/summaries-<topic>.xml` (e.g. 
 
 `digest.py` summarizes the last 7 days of every FreshRSS category except the `*_media` ones, with Claude CLI, into `out/digest.xml`. The container serves it on the Docker network only: in FreshRSS, subscribe to `http://news-digest:8080/digest.xml` (one entry per category per week).
 
+Topic priorities for the Highlights live in the `PRIORITIES` map in `digest.py`, keyed by category name. A category without a key gets the generic prompt. The key must match the FreshRSS category name exactly, case included: after renaming a category in FreshRSS, rename its key too, or its priorities are silently dropped.
+
 ```sh
 docker compose exec news-digest python digest.py          # all categories
 docker compose exec news-digest python digest.py "AI"     # one category, cheaper while testing
