@@ -25,8 +25,6 @@ The container runs as a host user that exists only for it: no login, no sudo, no
 ```sh
 sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin news-digest
 id news-digest                                   # put uid and gid in .env as APP_UID / APP_GID
-sudo chgrp news-digest secrets secrets/*.txt     # it reads the secrets through its group...
-chmod 750 secrets && chmod 640 secrets/*.txt     # ...while you keep owning them
 sudo chown -R news-digest:news-digest out        # the only place it writes
 docker compose down
 docker volume rm news-digest_home                # recreated owned by the new user (the Whisper model downloads again)
@@ -50,30 +48,15 @@ claude -p "Reply with: ok" --model haiku --tools ''
 python -c "import faster_whisper, av, feedgen; print(av.__version__)"
 ```
 
-## YouTube cookies
+## YouTube: Gemini
 
-With `GEMINI_API_KEY` set in `.env`, YouTube videos are summarized by Gemini, which reads the video from Google's servers: no subtitles, cookies or Whisper here. Use a key from an AI Studio project without billing: a project with billing is not on the free tier and gets refused when its credits run out. After adding the key, `docker compose up -d --force-recreate`. The cookies below are the fallback when Gemini fails.
-
-YouTube blocks anonymous requests from datacenter IPs, so yt-dlp uses the cookies of a dedicated Google account (never your personal one: the file gives access to the account).
-
-1. In a **private window**, sign in to youtube.com with the dedicated account.
-2. Export the youtube.com cookies in Netscape format with a local extension such as "Get cookies.txt LOCALLY".
-3. Close the private window **without signing out** (signing out invalidates the cookies).
-4. Copy the file to the server: `secrets/youtube-cookies.txt` next to `compose.yaml`, then `chmod 600` it.
-
-Check, with the URL of a video from a `*_media` category:
-
-```sh
-docker compose exec news-digest sh -c 'cp "$YTDLP_COOKIES_FILE" /tmp/cookies.txt && yt-dlp --cookies /tmp/cookies.txt --skip-download --write-auto-subs --sub-langs "en.*" -o "/tmp/%(id)s" "<video URL>" && ls /tmp/*.vtt'
-```
-
-yt-dlp rewrites the cookie file it is given, so it always works on a copy: the mounted file stays read-only. When YouTube answers "Sign in to confirm you're not a bot", the cookies have expired: export them again.
+YouTube refuses subtitles and audio to this server (HTTP 429, datacenter IP), so YouTube videos are summarized by Gemini (`gemini-3.1-flash-lite`), which reads the video from Google's servers. Put `GEMINI_API_KEY` in `.env`, then `docker compose up -d --force-recreate`. Use a key from an AI Studio project without billing: on the free tier the limit is 8 hours of YouTube per day and nothing can be charged; a project with billing is not on the free tier and gets refused when its credits run out. Only public videos work.
 
 ## Video and podcast summaries
 
-`media.py` takes every unread YouTube video of the last 7 days in a `<topic>_media` category, gets a transcript, summarizes it with Claude CLI (Haiku) and writes `out/summaries-<topic>.xml`. Then it marks the video as read in FreshRSS, so read/unread is the only state. The transcript comes from YouTube's subtitles when possible; when a video has none, or YouTube refuses subtitles to the server (HTTP 429), the audio is downloaded and transcribed in the container with Whisper (`small`, CPU: several minutes per video; the first run also downloads the model). Videos that fail stay unread and are retried on the next run.
+`media.py` takes every unread YouTube video of the last 7 days in a `<topic>_media` category, has Gemini summarize it (see above) and writes `out/summaries-<topic>.xml`. Then it marks the video as read in FreshRSS, so read/unread is the only state. Videos that fail (quota, private video, a premiere not out yet) stay unread and are retried on the next run.
 
-Podcasts work the same way: subscribe to the show's public RSS feed in a `<topic>_media` category, and every unread episode with an audio file (the feed's enclosure) is downloaded directly, transcribed with Whisper and summarized into the same `summaries-<topic>.xml`. The audio URL comes from a third-party feed, so only https is followed (redirects included), which keeps it away from the plain-http services on the Docker network; files over 500 MB are skipped. Long episodes take a long time to transcribe on this CPU: check the first ones in the log.
+Podcasts work the same way: subscribe to the show's public RSS feed in a `<topic>_media` category, and every unread episode with an audio file (the feed's enclosure) is downloaded directly, transcribed in the container with Whisper (`small`, CPU; the first run also downloads the model), summarized with Claude CLI (Haiku) and added to the same `summaries-<topic>.xml`. The audio URL comes from a third-party feed, so only https is followed (redirects included), which keeps it away from the plain-http services on the Docker network; files over 500 MB are skipped. Long episodes take a long time to transcribe on this CPU: check the first ones in the log.
 
 ```sh
 docker compose exec news-digest python media.py --limit 1   # one video, to try it

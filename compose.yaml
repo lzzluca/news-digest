@@ -25,11 +25,6 @@ services:
       - type: volume
         source: home
         target: /home/app
-      # Secrets that are files (YouTube cookies), read-only. git-ignored, mode 600 on the host.
-      - type: bind
-        source: ./secrets
-        target: /run/secrets
-        read_only: true
     # Guardrails: an episode may take hours, it must not starve FreshRSS and the blog.
     cpus: 3
     mem_limit: 4g

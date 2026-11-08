@@ -15,8 +15,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN npm install -g @anthropic-ai/claude-code
 # Updates come from rebuilding the image, not from the CLI updating itself.
 ENV DISABLE_AUTOUPDATER=1
-# yt-dlp needs a JavaScript runtime to solve YouTube's player challenges.
-RUN npm install -g deno
 
 # Home for the runtime user (uid set in compose.yaml): Claude CLI config and the Whisper model cache.
 # Created here so the named volume mounted on it inherits this ownership.
